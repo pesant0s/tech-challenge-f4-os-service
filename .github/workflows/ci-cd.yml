@@ -30,6 +30,20 @@ jobs:
     env:
       DATABASE_URL: "sqlite:///:memory:"
       SECRET_KEY: "chave-de-ci-com-mais-de-32-caracteres-para-teste"
+    # RabbitMQ real para o teste da thread de mensageria (ADR-019).
+    services:
+      rabbitmq:
+        image: rabbitmq:4.1-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: oficina
+          RABBITMQ_DEFAULT_PASS: oficina
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,7 +51,28 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: pytest --cov=app --cov-report=term-missing -q
+      # Abaixo de 80% de cobertura o pipeline falha.
+      - run: pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80 -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cobertura
+          path: coverage.xml
+
+  qualidade:
+    name: Qualidade (SonarQube Cloud)
+    needs: testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: cobertura
+      # O quality gate do SonarQube Cloud reprova o pipeline (sonar.qualitygate.wait no sonar-project.properties).
+      - uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   manifestos:
     name: Validar manifestos Kubernetes
@@ -76,21 +111,36 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      rabbitmq:
+        image: rabbitmq:4.1-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: oficina
+          RABBITMQ_DEFAULT_PASS: oficina
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
 
       - run: docker build -t oficina-api:ci .
 
       # Mesmo caminho de um deploy novo: o entrypoint migra um banco vazio e sobe o servidor.
-      - name: Provar que a imagem sobe contra PostgreSQL
+      - name: Provar que a imagem sobe contra PostgreSQL e RabbitMQ
         run: |
           docker run -d --name api --network host \
             -e DATABASE_URL=postgresql://oficina:oficina%21%23%25@localhost:5432/oficina \
             -e SECRET_KEY=chave-de-ci-com-mais-de-32-caracteres-para-teste \
+            -e RABBITMQ_URL=amqp://oficina:oficina@localhost:5672/%2F \
             -e LOG_FORMAT=json \
             oficina-api:ci
           for _ in $(seq 1 60); do
-            curl -fsS http://localhost:8000/health/ready && exit 0
+            if curl -fsS http://localhost:8000/health/ready && docker logs api 2>&1 | grep -q mensageria_conectada; then
+              exit 0
+            fi
             [ "$(docker inspect -f '{{.State.Running}}' api)" = "true" ] || break
             sleep 1
           done
