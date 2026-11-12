@@ -1,5 +1,4 @@
 from collections import defaultdict
-from sqlalchemy import case
 from sqlalchemy.orm import Session
 from app.domain.entities.os import HistoricoStatusOS, OrdemDeServico, StatusOS
 from app.domain.exceptions import NotFoundException
@@ -26,22 +25,6 @@ class OSRepositoryAdapter:
         if status:
             q = q.filter(OrdemDeServico.status == status)
         return q.order_by(OrdemDeServico.criado_em.desc()).offset(skip).limit(limit).all()
-
-    def listar_fila_priorizada(self) -> list[OrdemDeServico]:
-        """OS ativas por prioridade operacional; dentro dela, a mais antiga primeiro."""
-        prioridade = case(
-            (OrdemDeServico.status == StatusOS.EM_EXECUCAO,           1),
-            (OrdemDeServico.status == StatusOS.AGUARDANDO_APROVACAO,  2),
-            (OrdemDeServico.status == StatusOS.EM_DIAGNOSTICO,        3),
-            (OrdemDeServico.status == StatusOS.RECEBIDA,              4),
-            else_=9,
-        )
-        return (
-            self._db.query(OrdemDeServico)
-            .filter(OrdemDeServico.status.notin_([StatusOS.FINALIZADA, StatusOS.ENTREGUE]))
-            .order_by(prioridade, OrdemDeServico.criado_em.asc())
-            .all()
-        )
 
     def buscar_por_cliente_id(self, cliente_id) -> list[OrdemDeServico]:
         return (

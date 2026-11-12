@@ -2,7 +2,7 @@ from uuid import UUID
 from decimal import Decimal
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from app.domain.entities.os import StatusOS
+from app.domain.entities.os import StatusOS, TipoItem
 
 
 class ServicoItemCreate(BaseModel):
@@ -19,10 +19,11 @@ class ItemOSResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    servico_id: UUID | None = None
-    peca_id: UUID | None = None
+    tipo: TipoItem
+    item_id: UUID
     quantidade: int
-    preco_unitario: Decimal
+    descricao: str | None = None
+    preco_unitario: Decimal | None = None
 
 
 class HistoricoStatusResponse(BaseModel):
@@ -52,13 +53,10 @@ class OSResponse(BaseModel):
     cliente_id: UUID
     veiculo_id: UUID
     status: StatusOS
-    valor_total: Decimal | None
+    valor_total: Decimal | None = None
     criado_em: datetime
     iniciado_em: datetime | None
     finalizado_em: datetime | None
     itens: list[ItemOSResponse]
     historico: list[HistoricoStatusResponse]
 
-
-class OSStatusUpdate(BaseModel):
-    status: StatusOS

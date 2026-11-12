@@ -3,7 +3,7 @@ import uuid
 from datetime import timezone
 from sqlalchemy import (
     Table, Column, String, Integer, Numeric, Boolean, DateTime, ForeignKey,
-    Enum, UniqueConstraint, CheckConstraint, TypeDecorator,
+    Enum, CheckConstraint, TypeDecorator,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -12,9 +12,7 @@ from sqlalchemy.sql import func, text
 from app.infrastructure.database import mapper_registry, metadata
 from app.domain.entities.usuario import Usuario, RoleEnum
 from app.domain.entities.cliente import Cliente, Veiculo
-from app.domain.entities.catalogo import Servico
-from app.domain.entities.estoque import Peca, MovimentacaoEstoque
-from app.domain.entities.os import OrdemDeServico, ItemOS, HistoricoStatusOS, StatusOS
+from app.domain.entities.os import OrdemDeServico, ItemOS, HistoricoStatusOS, StatusOS, TipoItem
 
 
 class DataHoraUTC(TypeDecorator):
@@ -58,49 +56,12 @@ veiculos = Table(
     Column("cliente_id", UUID(as_uuid=True), ForeignKey("clientes.id"), nullable=False, index=True),
 )
 
-servicos = Table(
-    "servicos", metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-    Column("nome", String(150), nullable=False),
-    Column("descricao", String(500), nullable=True),
-    Column("preco", Numeric(10, 2), nullable=False),
-    Column("tempo_estimado_minutos", Integer, nullable=True),
-    UniqueConstraint("nome", name="uq_servicos_nome"),
-    CheckConstraint("preco > 0", name="ck_servicos_preco_positivo"),
-    CheckConstraint("tempo_estimado_minutos IS NULL OR tempo_estimado_minutos > 0", name="ck_servicos_tempo_positivo"),
-)
-
-pecas = Table(
-    "pecas", metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-    Column("nome", String(150), nullable=False),
-    Column("descricao", String(500), nullable=True),
-    Column("preco", Numeric(10, 2), nullable=False),
-    Column("quantidade", Integer, nullable=False, default=0),
-    Column("estoque_minimo", Integer, nullable=False, default=1),
-    UniqueConstraint("nome", name="uq_pecas_nome"),
-    CheckConstraint("preco > 0", name="ck_pecas_preco_positivo"),
-    CheckConstraint("quantidade >= 0", name="ck_pecas_quantidade_nao_negativa"),
-    CheckConstraint("estoque_minimo >= 0", name="ck_pecas_estoque_minimo_nao_negativo"),
-)
-
-movimentacoes_estoque = Table(
-    "movimentacoes_estoque", metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-    Column("peca_id", UUID(as_uuid=True), ForeignKey("pecas.id"), nullable=False, index=True),
-    Column("tipo", String(10), nullable=False),
-    Column("quantidade", Integer, nullable=False),
-    Column("motivo", String(200), nullable=True),
-    CheckConstraint("quantidade > 0", name="ck_movimentacoes_quantidade_positiva"),
-    CheckConstraint("tipo IN ('ENTRADA', 'SAIDA')", name="ck_movimentacoes_tipo"),
-)
-
 ordens_servico = Table(
     "ordens_servico", metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
     Column("cliente_id", UUID(as_uuid=True), ForeignKey("clientes.id"), nullable=False, index=True),
     Column("veiculo_id", UUID(as_uuid=True), ForeignKey("veiculos.id"), nullable=False),
-    Column("status", Enum(StatusOS), nullable=False, default=StatusOS.AGUARDANDO_APROVACAO, index=True),
+    Column("status", Enum(StatusOS), nullable=False, default=StatusOS.ABERTA, index=True),
     Column("valor_total", Numeric(10, 2), nullable=True),
     Column("criado_em", DataHoraUTC(timezone=True), server_default=func.now()),
     Column("iniciado_em", DataHoraUTC(timezone=True), nullable=True),
@@ -112,13 +73,13 @@ itens_os = Table(
     "itens_os", metadata,
     Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
     Column("os_id", UUID(as_uuid=True), ForeignKey("ordens_servico.id"), nullable=False, index=True),
-    Column("servico_id", UUID(as_uuid=True), ForeignKey("servicos.id"), nullable=True),
-    Column("peca_id", UUID(as_uuid=True), ForeignKey("pecas.id"), nullable=True),
-    Column("quantidade", Integer, nullable=False, default=1),
-    Column("preco_unitario", Numeric(10, 2), nullable=False),
+    Column("tipo", Enum(TipoItem), nullable=False),
+    Column("item_id", UUID(as_uuid=True), nullable=False),
+    Column("quantidade", Integer, nullable=False),
+    Column("descricao", String(150), nullable=True),
+    Column("preco_unitario", Numeric(10, 2), nullable=True),
     CheckConstraint("quantidade > 0", name="ck_itens_os_quantidade_positiva"),
-    CheckConstraint("preco_unitario >= 0", name="ck_itens_os_preco_nao_negativo"),
-    CheckConstraint("(servico_id IS NULL) <> (peca_id IS NULL)", name="ck_itens_os_servico_ou_peca"),
+    CheckConstraint("preco_unitario IS NULL OR preco_unitario >= 0", name="ck_itens_os_preco_nao_negativo"),
 )
 
 historico_status_os = Table(
@@ -130,9 +91,6 @@ historico_status_os = Table(
 )
 
 mapper_registry.map_imperatively(Usuario, usuarios)
-mapper_registry.map_imperatively(Servico, servicos)
-mapper_registry.map_imperatively(Peca, pecas)
-mapper_registry.map_imperatively(MovimentacaoEstoque, movimentacoes_estoque)
 
 mapper_registry.map_imperatively(Cliente, clientes, properties={
     "veiculos": relationship(Veiculo, back_populates="cliente"),

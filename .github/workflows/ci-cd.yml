@@ -30,7 +30,6 @@ jobs:
     env:
       DATABASE_URL: "sqlite:///:memory:"
       SECRET_KEY: "chave-de-ci-com-mais-de-32-caracteres-para-teste"
-      WEBHOOK_SECRET: "webhook-secret-local"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -88,7 +87,7 @@ jobs:
           docker run -d --name api --network host \
             -e DATABASE_URL=postgresql://oficina:oficina%21%23%25@localhost:5432/oficina \
             -e SECRET_KEY=chave-de-ci-com-mais-de-32-caracteres-para-teste \
-            -e WEBHOOK_SECRET=ci -e LOG_FORMAT=json \
+            -e LOG_FORMAT=json \
             oficina-api:ci
           for _ in $(seq 1 60); do
             curl -fsS http://localhost:8000/health/ready && exit 0
@@ -176,7 +175,6 @@ jobs:
           kubectl create secret generic oficina-secret --namespace "$NAMESPACE" \
             --from-literal=DATABASE_URL="$(campo DATABASE_URL)" \
             --from-literal=SECRET_KEY="$(campo SECRET_KEY)" \
-            --from-literal=WEBHOOK_SECRET="$(campo WEBHOOK_SECRET)" \
             --from-literal=ADMIN_PASSWORD="$(campo ADMIN_PASSWORD)" \
             --from-literal=NEW_RELIC_LICENSE_KEY="${{ secrets.NEW_RELIC_LICENSE_KEY }}" \
             --dry-run=client -o yaml | kubectl apply -f -

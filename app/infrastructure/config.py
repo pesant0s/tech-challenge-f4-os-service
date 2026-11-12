@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin123"
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
-    WEBHOOK_SECRET: str = "webhook-secret-local"
     LOG_FORMAT: str = "console"
     LOG_LEVEL: str = "INFO"
 

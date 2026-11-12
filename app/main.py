@@ -18,11 +18,8 @@ from app.infrastructure.database import get_db
 from app.adapters.inbound.http.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
 from app.adapters.inbound.http.auth_schemas import UsuarioCreate
 from app.adapters.inbound.http.cadastro_routes import router as cadastro_router
-from app.adapters.inbound.http.catalogo_routes import router as catalogo_router
-from app.adapters.inbound.http.estoque_routes import router as estoque_router
 from app.adapters.inbound.http.atendimento_routes import router as atendimento_router
 from app.adapters.inbound.http.auth_routes import router as auth_router
-from app.adapters.inbound.http.webhook_routes import router as webhook_router
 from app.adapters.outbound.persistence.auth_repository import create_usuario, get_usuario_by_username
 from app.domain.entities.usuario import RoleEnum
 from app.domain.exceptions import NotFoundException, ConflictException, BusinessRuleException
@@ -59,9 +56,9 @@ async def lifespan(app: FastAPI):
 limiter = Limiter(key_func=lambda request: request.headers.get("x-cliente-ip") or get_remote_address(request))
 
 app = FastAPI(
-    title="Tech Challenge — Oficina Mecânica",
+    title="Tech Challenge — Oficina · OS Service",
     description="""
-Sistema de gestão de ordens de serviço para oficinas mecânicas.
+Serviço de ordens de serviço da oficina: cadastro de clientes e veículos, abertura, consulta e entrega da OS.
 
 ## Autenticação
 
@@ -79,7 +76,7 @@ oficina, e token de funcionário não se passa por cliente.
 
 | Role | Descrição |
 |---|---|
-| `ADMIN` | Acesso total — gerencia usuários, catálogo e estoque |
+| `ADMIN` | Acesso total — gerencia usuários e acessa as métricas |
 | `ATENDENTE` | Acesso operacional — clientes, veículos e ordens de serviço |
 
 ## Rotas do cliente
@@ -88,7 +85,6 @@ oficina, e token de funcionário não se passa por cliente.
 |---|---|
 | `GET /atendimento/os/consulta` | Ordens de serviço do cliente autenticado |
 | `GET /atendimento/os/{id}` | Detalhe da OS — o cliente só vê as próprias |
-| `POST /atendimento/os/{id}/aprovar` · `/rejeitar` | Decisão sobre o orçamento |
 
 ## Acesso público
 
@@ -99,9 +95,10 @@ oficina, e token de funcionário não se passa por cliente.
 
 ## Ciclo de vida da OS
 
-`AGUARDANDO_APROVACAO` → `RECEBIDA` → `EM_DIAGNOSTICO` → `EM_EXECUCAO` → `FINALIZADA` → `ENTREGUE`
+`ABERTA` → `AGUARDANDO_APROVACAO` → `AGUARDANDO_PAGAMENTO` → `NA_FILA` → `EM_DIAGNOSTICO` → `EM_EXECUCAO` → `FINALIZADA` → `ENTREGUE`
 
-Transições alternativas: `NEGADA`, `ABANDONADA`
+Transições alternativas: `NEGADA` (orçamento recusado) e `CANCELADA` (antes da fila). A entrega é a única
+transição manual (`POST /atendimento/os/{id}/entregar`); as demais vêm dos eventos dos outros serviços.
     """,
     version="1.0.0",
     lifespan=lifespan,
@@ -146,10 +143,7 @@ app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(auth_router)
 app.include_router(cadastro_router)
-app.include_router(catalogo_router)
-app.include_router(estoque_router)
 app.include_router(atendimento_router)
-app.include_router(webhook_router)
 
 
 @app.post("/auth/token", tags=["Auth"], summary="Obter token JWT")

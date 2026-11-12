@@ -7,7 +7,7 @@ VENV       := .venv
 PYTHON     ?= $(shell command -v python3.12 2>/dev/null || echo python3)
 # Delimitador `|` no sed: num Makefile, `#` abriria um comentário.
 GITHUB_OWNER ?= $(shell git config --get remote.origin.url 2>/dev/null | sed -E 's|^.*github\.com[:/]([^/]+)/.*$$|\1|')
-TESTE = DATABASE_URL="sqlite:///:memory:" SECRET_KEY="chave-de-teste-com-mais-de-32-caracteres" WEBHOOK_SECRET="webhook-secret-local"
+TESTE = DATABASE_URL="sqlite:///:memory:" SECRET_KEY="chave-de-teste-com-mais-de-32-caracteres"
 
 help: ## Lista os alvos
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -37,7 +37,7 @@ test: ## Roda os testes com SQLite em memória
 
 test-docker: setup ## Roda os testes dentro do container, sem Python na máquina
 	docker compose build api
-	docker compose run --rm --no-deps -e DATABASE_URL="sqlite:///:memory:" -e SECRET_KEY="chave-de-teste-com-mais-de-32-caracteres" -e WEBHOOK_SECRET="webhook-secret-local" api "python -m pytest -q -p no:cacheprovider"
+	docker compose run --rm --no-deps -e DATABASE_URL="sqlite:///:memory:" -e SECRET_KEY="chave-de-teste-com-mais-de-32-caracteres" api "python -m pytest -q -p no:cacheprovider"
 
 cov: ## Testes com cobertura
 	@test -x $(VENV)/bin/python || $(MAKE) --no-print-directory venv
