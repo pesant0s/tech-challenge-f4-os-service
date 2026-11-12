@@ -3,6 +3,7 @@ from decimal import Decimal
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.domain.entities.os import StatusOS, TipoItem
+from app.domain.saga import EstadoSaga, PassoSaga
 
 
 class ServicoItemCreate(BaseModel):
@@ -46,6 +47,17 @@ class OSCreate(BaseModel):
         return self
 
 
+class SagaResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    passo: PassoSaga
+    estado: EstadoSaga
+    motivo: str | None = None
+    compensacoes: list[str]
+    expira_em: datetime | None = None
+
+
 class OSResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -59,4 +71,5 @@ class OSResponse(BaseModel):
     finalizado_em: datetime | None
     itens: list[ItemOSResponse]
     historico: list[HistoricoStatusResponse]
+    saga: SagaResponse | None = None
 

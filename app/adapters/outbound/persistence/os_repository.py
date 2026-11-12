@@ -37,6 +37,9 @@ class OSRepositoryAdapter:
     def adicionar(self, entidade) -> None:
         self._db.add(entidade)
 
+    def flush(self) -> None:
+        self._db.flush()
+
     def commit(self) -> None:
         self._db.commit()
 

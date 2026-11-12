@@ -3,9 +3,10 @@ import uuid
 from datetime import timezone
 from sqlalchemy import (
     Table, Column, String, Integer, Numeric, Boolean, DateTime, ForeignKey,
-    Enum, CheckConstraint, TypeDecorator,
+    Enum, CheckConstraint, Index, JSON, TypeDecorator,
 )
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func, text
 
@@ -13,6 +14,7 @@ from app.infrastructure.database import mapper_registry, metadata
 from app.domain.entities.usuario import Usuario, RoleEnum
 from app.domain.entities.cliente import Cliente, Veiculo
 from app.domain.entities.os import OrdemDeServico, ItemOS, HistoricoStatusOS, StatusOS, TipoItem
+from app.domain.saga import EstadoSaga, PassoSaga, SagaAberturaOS
 
 
 class DataHoraUTC(TypeDecorator):
@@ -90,6 +92,47 @@ historico_status_os = Table(
     Column("entrou_em", DataHoraUTC(timezone=True), nullable=False),
 )
 
+saga_instancia = Table(
+    "saga_instancia", metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
+    Column("os_id", UUID(as_uuid=True), ForeignKey("ordens_servico.id"), nullable=False, unique=True),
+    Column("passo", Enum(PassoSaga), nullable=False),
+    Column("estado", Enum(EstadoSaga), nullable=False, index=True),
+    Column("motivo", String(40), nullable=True),
+    # MutableList: a Saga altera a lista no lugar (pop e append), e o ORM precisa perceber.
+    Column("compensacoes", MutableList.as_mutable(JSON), nullable=False, default=list),
+    Column("reserva_feita", Boolean, nullable=False, default=False),
+    Column("orcamento_id", String(64), nullable=True),
+    Column("orcamento_ativo", Boolean, nullable=False, default=False),
+    Column("pagamento_id", String(64), nullable=True),
+    Column("pagamento_confirmado", Boolean, nullable=False, default=False),
+    Column("tentativas", Integer, nullable=False, default=0),
+    Column("expira_em", DataHoraUTC(timezone=True), nullable=True, index=True),
+    Column("criada_em", DataHoraUTC(timezone=True), server_default=func.now()),
+    Column("atualizada_em", DataHoraUTC(timezone=True), server_default=func.now(), onupdate=func.now()),
+)
+
+# Outbox e inbox não são entidades de domínio: só tabelas da mensageria (ADR-021).
+outbox = Table(
+    "outbox", metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("exchange", String(60), nullable=False),
+    Column("rota", String(80), nullable=False),
+    Column("tipo", String(40), nullable=False),
+    Column("corpo", JSON, nullable=False),
+    Column("cabecalhos", JSON, nullable=False),
+    Column("criado_em", DataHoraUTC(timezone=True), nullable=False, server_default=func.now()),
+    Column("publicado_em", DataHoraUTC(timezone=True), nullable=True),
+    Index("ix_outbox_pendentes", "publicado_em", "criado_em"),
+)
+
+mensagens_processadas = Table(
+    "mensagens_processadas", metadata,
+    Column("message_id", UUID(as_uuid=True), primary_key=True),
+    Column("tipo", String(40), nullable=False),
+    Column("processada_em", DataHoraUTC(timezone=True), nullable=False, server_default=func.now()),
+)
+
 mapper_registry.map_imperatively(Usuario, usuarios)
 
 mapper_registry.map_imperatively(Cliente, clientes, properties={
@@ -103,7 +146,9 @@ mapper_registry.map_imperatively(HistoricoStatusOS, historico_status_os)
 mapper_registry.map_imperatively(OrdemDeServico, ordens_servico, properties={
     "itens": relationship(ItemOS, back_populates="os", lazy="selectin"),
     "historico": relationship(HistoricoStatusOS, order_by=historico_status_os.c.entrou_em, lazy="selectin"),
+    "saga": relationship(SagaAberturaOS, uselist=False, lazy="selectin", viewonly=True),
 })
+mapper_registry.map_imperatively(SagaAberturaOS, saga_instancia)
 mapper_registry.map_imperatively(ItemOS, itens_os, properties={
     "os": relationship(OrdemDeServico, back_populates="itens"),
 })

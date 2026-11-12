@@ -8,22 +8,32 @@ from app.infrastructure.security import (
 from app.adapters.inbound.http.atendimento_schemas import OSCreate, OSResponse
 from app.adapters.outbound.persistence.os_repository import OSRepositoryAdapter
 from app.adapters.outbound.persistence.cliente_repository import ClienteRepositoryAdapter
+from app.adapters.outbound.persistence.outbox_repository import OutboxRepositoryAdapter
+from app.adapters.outbound.persistence.saga_repository import SagaRepositoryAdapter
 from app.application.use_cases.criar_os import CriarOSUseCase
 from app.application.use_cases.entregar_os import EntregarOSUseCase
 from app.application.use_cases.listar_os import ListarOSUseCase
 from app.application.use_cases.obter_os import ObterOSUseCase
+from app.application.use_cases.saga_os import CancelarOSUseCase
+from app.infrastructure.config import prazos_da_saga
 from app.domain.entities.os import StatusOS
 
 router = APIRouter(prefix="/atendimento", tags=["📋 Ordens de Serviço"])
 
 
 def criar_os_use_case(db: Session = Depends(get_db)) -> CriarOSUseCase:
-    return CriarOSUseCase(os_repo=OSRepositoryAdapter(db), cliente_repo=ClienteRepositoryAdapter(db))
+    return CriarOSUseCase(
+        os_repo=OSRepositoryAdapter(db), cliente_repo=ClienteRepositoryAdapter(db),
+        saga_repo=SagaRepositoryAdapter(db), outbox_repo=OutboxRepositoryAdapter(db), prazos=prazos_da_saga(),
+    )
 
 
 @router.post("/os", response_model=OSResponse, status_code=201,
     summary="Criar Ordem de Serviço",
-    description="Cria uma OS com status inicial **ABERTA**. Os itens entram sem preço; a precificação vem do orçamento.")
+    description="""
+Cria a OS em **ABERTA** e inicia a Saga: o pedido de reserva das peças vai para a Execução pela fila.
+Os itens entram sem preço; a Execução devolve os preços e o Billing gera o orçamento.
+""")
 def criar_os(data: OSCreate, caso_de_uso: CriarOSUseCase = Depends(criar_os_use_case), _=Depends(get_current_user)):
     return caso_de_uso.executar(data.cliente_id, data.veiculo_id, data.servicos, data.pecas)
 
@@ -72,3 +82,15 @@ def obter_os(os_id: UUID, db: Session = Depends(get_db), cliente_id=Depends(get_
     description="Move a OS de `FINALIZADA` → `ENTREGUE`. Requer **token de funcionário**.")
 def entregar_os(os_id: UUID, db: Session = Depends(get_db), _=Depends(get_current_user)):
     return EntregarOSUseCase(OSRepositoryAdapter(db)).executar(os_id)
+
+
+@router.post("/os/{os_id}/cancelar", response_model=OSResponse,
+    summary="Cancelar OS (oficina)",
+    description="""
+Cancela a OS antes do pagamento e dispara as compensações da Saga: cancelar o orçamento e liberar a
+reserva de peças. A OS fica `CANCELADA` quando a última compensação é confirmada. Requer **token de funcionário**.
+""")
+def cancelar_os(os_id: UUID, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return CancelarOSUseCase(
+        SagaRepositoryAdapter(db), OSRepositoryAdapter(db), OutboxRepositoryAdapter(db), prazos_da_saga(),
+    ).executar(os_id)

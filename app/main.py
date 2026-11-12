@@ -11,15 +11,17 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from app.infrastructure.config import settings
+from app.infrastructure.config import prazos_da_saga, settings
 from app.infrastructure.logging_config import ConsoleFormatter, JsonFormatter, obter_correlation_id
 from app.infrastructure.security import create_access_token, pwd_context
-from app.infrastructure.database import get_db
+from app.infrastructure.database import SessionLocal, get_db
+from app.infrastructure.trabalhador import TrabalhadorMensageria
 from app.adapters.inbound.http.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
 from app.adapters.inbound.http.auth_schemas import UsuarioCreate
 from app.adapters.inbound.http.cadastro_routes import router as cadastro_router
 from app.adapters.inbound.http.atendimento_routes import router as atendimento_router
 from app.adapters.inbound.http.auth_routes import router as auth_router
+from app.adapters.inbound.http.interno_routes import router as interno_router
 from app.adapters.outbound.persistence.auth_repository import create_usuario, get_usuario_by_username
 from app.domain.entities.usuario import RoleEnum
 from app.domain.exceptions import NotFoundException, ConflictException, BusinessRuleException
@@ -31,6 +33,7 @@ logging.basicConfig(handlers=[_saida], level=settings.LOG_LEVEL.upper(), force=T
 for _nome in ("uvicorn", "uvicorn.error", "uvicorn.access"):
     logging.getLogger(_nome).handlers.clear()
     logging.getLogger(_nome).propagate = True
+logging.getLogger("pika").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
@@ -49,7 +52,14 @@ async def lifespan(app: FastAPI):
     finally:
         if get_db not in app.dependency_overrides:
             db.close()
+    trabalhador = None
+    if settings.RABBITMQ_URL:
+        trabalhador = TrabalhadorMensageria(settings.RABBITMQ_URL, SessionLocal, prazos_da_saga(),
+                                            intervalo_prazos=settings.SAGA_VARREDURA_SEGUNDOS)
+        trabalhador.start()
     yield
+    if trabalhador:
+        trabalhador.parar()
 
 
 # Atrás do API Gateway a origem vista é a VPC; o gateway repassa o IP do cliente em x-cliente-ip.
@@ -144,6 +154,7 @@ app.add_middleware(CorrelationIdMiddleware)
 app.include_router(auth_router)
 app.include_router(cadastro_router)
 app.include_router(atendimento_router)
+app.include_router(interno_router)
 
 
 @app.post("/auth/token", tags=["Auth"], summary="Obter token JWT")
