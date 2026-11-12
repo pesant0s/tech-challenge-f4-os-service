@@ -57,9 +57,11 @@ async def lifespan(app: FastAPI):
         trabalhador = TrabalhadorMensageria(settings.RABBITMQ_URL, SessionLocal, prazos_da_saga(),
                                             intervalo_prazos=settings.SAGA_VARREDURA_SEGUNDOS)
         trabalhador.start()
-    yield
-    if trabalhador:
-        trabalhador.parar()
+    try:
+        yield
+    finally:
+        if trabalhador:
+            trabalhador.parar()
 
 
 # Atrás do API Gateway a origem vista é a VPC; o gateway repassa o IP do cliente em x-cliente-ip.
