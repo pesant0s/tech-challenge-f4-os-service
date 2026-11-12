@@ -6,29 +6,39 @@ from app.domain.exceptions import BusinessRuleException
 
 
 class StatusOS(str, enum.Enum):
+    ABERTA = "ABERTA"
     AGUARDANDO_APROVACAO = "AGUARDANDO_APROVACAO"
-    RECEBIDA = "RECEBIDA"
+    AGUARDANDO_PAGAMENTO = "AGUARDANDO_PAGAMENTO"
+    NA_FILA = "NA_FILA"
     EM_DIAGNOSTICO = "EM_DIAGNOSTICO"
     EM_EXECUCAO = "EM_EXECUCAO"
     FINALIZADA = "FINALIZADA"
     ENTREGUE = "ENTREGUE"
     NEGADA = "NEGADA"
-    ABANDONADA = "ABANDONADA"
+    CANCELADA = "CANCELADA"
+
+
+class TipoItem(str, enum.Enum):
+    SERVICO = "SERVICO"
+    PECA = "PECA"
 
 
 class ItemOS:
-    """Item de uma Ordem de Serviço (um serviço OU uma peça). Entidade pura."""
+    """Item de uma Ordem de Serviço (serviço ou peça do catálogo); o preço chega com a precificação."""
 
-    def __init__(self, quantidade=1, preco_unitario=None, servico_id=None,
-                 peca_id=None, os_id=None, id=None):
+    def __init__(self, tipo=None, item_id=None, quantidade=1, descricao=None,
+                 preco_unitario=None, os_id=None, id=None):
         self.id = id
         self.os_id = os_id
-        self.servico_id = servico_id
-        self.peca_id = peca_id
+        self.tipo = tipo
+        self.item_id = item_id
         self.quantidade = quantidade
+        self.descricao = descricao
         self.preco_unitario = preco_unitario
 
     def calcular_subtotal(self) -> Decimal:
+        if self.preco_unitario is None:
+            raise BusinessRuleException("Item ainda não precificado")
         return Decimal(str(self.preco_unitario)) * self.quantidade
 
 
@@ -46,17 +56,21 @@ class OrdemDeServico:
     """Ordem de Serviço com máquina de estados de negócio. Entidade de domínio pura."""
 
     TRANSICOES_VALIDAS: dict[StatusOS, list[StatusOS]] = {
-        StatusOS.AGUARDANDO_APROVACAO: [StatusOS.RECEBIDA, StatusOS.NEGADA, StatusOS.ABANDONADA],
-        StatusOS.RECEBIDA:             [StatusOS.EM_DIAGNOSTICO],
-        StatusOS.EM_DIAGNOSTICO:       [StatusOS.AGUARDANDO_APROVACAO, StatusOS.EM_EXECUCAO],
+        StatusOS.ABERTA:               [StatusOS.AGUARDANDO_APROVACAO, StatusOS.CANCELADA],
+        StatusOS.AGUARDANDO_APROVACAO: [StatusOS.AGUARDANDO_PAGAMENTO, StatusOS.NEGADA, StatusOS.CANCELADA],
+        StatusOS.AGUARDANDO_PAGAMENTO: [StatusOS.NA_FILA, StatusOS.CANCELADA],
+        StatusOS.NA_FILA:              [StatusOS.EM_DIAGNOSTICO],
+        StatusOS.EM_DIAGNOSTICO:       [StatusOS.EM_EXECUCAO],
         StatusOS.EM_EXECUCAO:          [StatusOS.FINALIZADA],
         StatusOS.FINALIZADA:           [StatusOS.ENTREGUE],
-        StatusOS.NEGADA:               [],
         StatusOS.ENTREGUE:             [],
-        StatusOS.ABANDONADA:           [],
+        StatusOS.NEGADA:               [],
+        StatusOS.CANCELADA:            [],
     }
 
-    def __init__(self, cliente_id=None, veiculo_id=None, status=StatusOS.AGUARDANDO_APROVACAO,
+    CAMINHO_EXECUCAO = [StatusOS.NA_FILA, StatusOS.EM_DIAGNOSTICO, StatusOS.EM_EXECUCAO, StatusOS.FINALIZADA]
+
+    def __init__(self, cliente_id=None, veiculo_id=None, status=StatusOS.ABERTA,
                  valor_total=None, criado_em=None, iniciado_em=None, finalizado_em=None,
                  itens=None, historico=None, id=None):
         self.id = id
@@ -86,19 +100,23 @@ class OrdemDeServico:
         if novo_status == StatusOS.FINALIZADA:
             self.finalizado_em = agora
 
-    def aprovar(self) -> None:
-        if self.status != StatusOS.AGUARDANDO_APROVACAO:
-            raise BusinessRuleException(
-                f"OS não está aguardando aprovação (status atual: {self.status})"
-            )
-        self.transicionar_para(StatusOS.RECEBIDA)
+    def precificar(self, itens_precificados: list[dict], valor_total) -> None:
+        """Aplica descrição e preço unitário calculados pelo orçamento e fixa o valor total."""
+        for precificado in itens_precificados:
+            item = next((i for i in self.itens
+                         if i.tipo == precificado["tipo"] and str(i.item_id) == precificado["item_id"]), None)
+            if item is None:
+                raise BusinessRuleException(
+                    f"Item {precificado['tipo']} {precificado['item_id']} não pertence à OS"
+                )
+            item.descricao = precificado["descricao"]
+            item.preco_unitario = Decimal(precificado["preco_unitario"])
+        self.valor_total = Decimal(valor_total)
 
-    def rejeitar(self) -> None:
-        if self.status != StatusOS.AGUARDANDO_APROVACAO:
-            raise BusinessRuleException(
-                f"OS não está aguardando aprovação (status atual: {self.status})"
-            )
-        self.transicionar_para(StatusOS.NEGADA)
-
-    def recalcular_total(self) -> None:
-        self.valor_total = sum(item.calcular_subtotal() for item in self.itens)
+    def avancar_execucao(self, alvo: StatusOS) -> None:
+        """Percorre NA_FILA → EM_DIAGNOSTICO → EM_EXECUCAO → FINALIZADA até o alvo; repetir o evento não faz nada."""
+        caminho = self.CAMINHO_EXECUCAO
+        if self.status not in caminho or alvo not in caminho:
+            raise BusinessRuleException(f"OS em {self.status} não está no caminho de execução")
+        for proximo in caminho[caminho.index(self.status) + 1:caminho.index(alvo) + 1]:
+            self.transicionar_para(proximo)

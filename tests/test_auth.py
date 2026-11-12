@@ -83,7 +83,7 @@ def test_sem_token_retorna_401(client):
     assert r.status_code == 401
 
 
-def test_atendente_pode_criar_os(client, atendente_headers, auth_headers):
+def test_atendente_pode_criar_os(client, atendente_headers):
     """ATENDENTE tem acesso operacional: cria OS normalmente."""
     cliente = client.post("/cadastro/clientes", json={
         "nome": "Cliente Teste", "cpf_cnpj": "529.982.247-25", "telefone": "11999999999"
@@ -92,30 +92,11 @@ def test_atendente_pode_criar_os(client, atendente_headers, auth_headers):
         "placa": "AAA-1111", "marca": "Fiat", "modelo": "Uno",
         "ano": "2020", "cliente_id": cliente["id"]
     }, headers=atendente_headers).json()
-    servico = client.post("/catalogo/servicos", json={
-        "nome": "Troca de óleo", "preco": 100.0
-    }, headers=auth_headers).json()  # admin cria o serviço
     r = client.post("/atendimento/os", json={
         "cliente_id": cliente["id"], "veiculo_id": veiculo["id"],
-        "servicos": [{"servico_id": servico["id"], "quantidade": 1}]
+        "servicos": [{"servico_id": "00000000-0000-0000-0000-0000000000a1", "quantidade": 1}]
     }, headers=atendente_headers)
     assert r.status_code == 201
-
-
-def test_atendente_nao_pode_criar_servico(client, atendente_headers):
-    """ATENDENTE não pode modificar o catálogo."""
-    r = client.post("/catalogo/servicos", json={
-        "nome": "Serviço proibido", "preco": 50.0
-    }, headers=atendente_headers)
-    assert r.status_code == 403
-
-
-def test_atendente_nao_pode_cadastrar_peca(client, atendente_headers):
-    """ATENDENTE não pode modificar o estoque."""
-    r = client.post("/estoque/pecas", json={
-        "nome": "Peça proibida", "preco": 20.0, "quantidade": 5, "estoque_minimo": 1
-    }, headers=atendente_headers)
-    assert r.status_code == 403
 
 
 def test_atendente_nao_pode_ver_metricas(client, atendente_headers):

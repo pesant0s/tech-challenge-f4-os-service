@@ -13,10 +13,7 @@ CPF_B = "123.456.789-09"
 
 @pytest.fixture
 def cenario(client, auth_headers):
-    """Dois clientes, cada um com uma OS aguardando aprovação."""
-    servico = client.post("/catalogo/servicos", json={
-        "nome": "Alinhamento", "preco": 90.0
-    }, headers=auth_headers).json()
+    """Dois clientes, cada um com uma OS aberta."""
 
     def _cliente_com_os(nome, cpf, placa, telefone):
         cliente = client.post("/cadastro/clientes", json={
@@ -28,7 +25,7 @@ def cenario(client, auth_headers):
         }, headers=auth_headers).json()
         os = client.post("/atendimento/os", json={
             "cliente_id": cliente["id"], "veiculo_id": veiculo["id"],
-            "servicos": [{"servico_id": servico["id"], "quantidade": 1}]
+            "servicos": [{"servico_id": str(uuid.uuid4()), "quantidade": 1}]
         }, headers=auth_headers).json()
         return cliente, os
 
@@ -40,8 +37,6 @@ def cenario(client, auth_headers):
 @pytest.mark.parametrize("metodo,rota", [
     ("get", "/atendimento/os/consulta"),
     ("get", "/atendimento/os/{os}"),
-    ("post", "/atendimento/os/{os}/aprovar"),
-    ("post", "/atendimento/os/{os}/rejeitar"),
 ])
 def test_rotas_de_cliente_exigem_token(client, cenario, metodo, rota):
     resposta = getattr(client, metodo)(rota.format(os=cenario["os_a"]["id"]))
@@ -73,27 +68,19 @@ def test_funcionario_enxerga_a_os_de_qualquer_cliente(client, cenario, auth_head
 
 @pytest.mark.parametrize("rota", [
     "/atendimento/os",
-    "/atendimento/os/fila",
     "/cadastro/clientes",
-    "/estoque/pecas",
 ])
 def test_token_de_cliente_nao_abre_rotas_da_oficina(client, cenario, token_cliente, rota):
     assert client.get(rota, headers=token_cliente(cenario["a"])).status_code == 403
 
 
-def test_cliente_nao_altera_status_da_propria_os(client, cenario, token_cliente):
-    r = client.patch(f"/atendimento/os/{cenario['os_a']['id']}/status",
-        json={"status": "RECEBIDA"}, headers=token_cliente(cenario["a"]))
+def test_cliente_nao_entrega_a_propria_os(client, cenario, token_cliente):
+    r = client.post(f"/atendimento/os/{cenario['os_a']['id']}/entregar", headers=token_cliente(cenario["a"]))
     assert r.status_code == 403
 
 
 def test_token_de_funcionario_nao_consulta_como_cliente(client, cenario, auth_headers):
     assert client.get("/atendimento/os/consulta", headers=auth_headers).status_code == 403
-
-
-def test_funcionario_nao_aprova_em_nome_do_cliente(client, cenario, auth_headers):
-    r = client.post(f"/atendimento/os/{cenario['os_a']['id']}/aprovar", headers=auth_headers)
-    assert r.status_code == 403
 
 
 def test_token_de_funcionario_declara_o_tipo(client):
@@ -141,12 +128,11 @@ def test_sub_malformado_vira_401_e_nao_500(client, cenario, token_cliente):
 
 
 def test_jornada_do_cliente(client, cenario, token_cliente):
-    """Autenticado por CPF, o cliente encontra a própria OS, aprova e vê o novo status."""
+    """Autenticado por CPF, o cliente encontra a própria OS e consulta o detalhe."""
     headers = token_cliente(cenario["a"])
 
     minhas = client.get("/atendimento/os/consulta", headers=headers).json()
-    assert [o["status"] for o in minhas] == ["AGUARDANDO_APROVACAO"]
+    assert [o["status"] for o in minhas] == ["ABERTA"]
 
-    os_id = minhas[0]["id"]
-    assert client.post(f"/atendimento/os/{os_id}/aprovar", headers=headers).status_code == 200
-    assert client.get(f"/atendimento/os/{os_id}", headers=headers).json()["status"] == "RECEBIDA"
+    detalhe = client.get(f"/atendimento/os/{minhas[0]['id']}", headers=headers).json()
+    assert detalhe["id"] == minhas[0]["id"]

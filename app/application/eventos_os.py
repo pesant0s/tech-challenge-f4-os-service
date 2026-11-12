@@ -3,10 +3,11 @@ import logging
 logger = logging.getLogger("oficina.os")
 
 
-def registrar_mudanca_de_status(os) -> None:
-    """Loga a entrada da OS no status atual e o tempo que ela passou no anterior; base dos dashboards."""
-    *anteriores, atual = os.historico
-    anterior = anteriores[-1] if anteriores else None
+def registrar_mudanca_de_status(os, indice: int = -1) -> None:
+    """Loga uma entrada do histórico (a última, por padrão) e o tempo no status anterior; base dos dashboards."""
+    indice %= len(os.historico)
+    atual = os.historico[indice]
+    anterior = os.historico[indice - 1] if indice else None
     logger.info("OS %s entrou em %s", os.id, atual.status.value, extra={
         "evento": "os_status",
         "os_id": str(os.id),
