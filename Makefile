@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help setup up down logs sh venv test test-docker cov build render kubeconfig implantar
+.PHONY: help setup up down logs sh venv test test-docker cov build render implantar conta infra-init infra-up infra-down infra-validate
 
 AWS_REGION ?= us-east-1
 TAG        ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo latest)
@@ -7,6 +7,9 @@ VENV       := .venv
 PYTHON     ?= $(shell command -v python3.12 2>/dev/null || echo python3)
 # Delimitador `|` no sed: num Makefile, `#` abriria um comentário.
 GITHUB_OWNER ?= $(shell git config --get remote.origin.url 2>/dev/null | sed -E 's|^.*github\.com[:/]([^/]+)/.*$$|\1|')
+CONTA  = $(shell aws sts get-caller-identity --query Account --output text)
+BUCKET = tech-challenge-f4-tfstate-$(CONTA)
+export AWS_REGION
 TESTE = DATABASE_URL="sqlite:///:memory:" SECRET_KEY="chave-de-teste-com-mais-de-32-caracteres"
 
 help: ## Lista os alvos
@@ -44,15 +47,32 @@ cov: ## Testes com cobertura
 	$(TESTE) $(VENV)/bin/python -m pytest --cov=app --cov-report=term-missing --cov-report=xml
 
 build: ## Constrói a imagem localmente
-	docker build -t oficina-api:$(TAG) .
+	docker build -t tech-challenge-f4-os-service:$(TAG) .
 
 render: ## Renderiza os manifestos que irão para o cluster
 	kubectl kustomize k8s/overlays/producao
 
-kubeconfig: ## Aponta o kubectl para o cluster
-	aws eks update-kubeconfig --name tech-challenge-eks --region $(AWS_REGION)
-
 # O deploy passa sempre pelo pipeline, que publica a imagem e monta o Secret.
 implantar: ## Aciona o pipeline de deploy na main
 	@test -n "$(GITHUB_OWNER)" || { echo "Dono do repositório desconhecido: rode com GITHUB_OWNER=seu-usuario."; exit 1; }
-	gh workflow run ci-cd.yml --ref main --repo $(GITHUB_OWNER)/tech-challenge-app
+	gh workflow run ci-cd.yml --ref main --repo $(GITHUB_OWNER)/tech-challenge-f4-os-service
+
+conta: ## Mostra em qual conta AWS os comandos de infra vão atuar
+	@test -n "$$AWS_PROFILE$$AWS_ACCESS_KEY_ID" || { echo "Defina AWS_PROFILE (ou as credenciais da sessão) com a conta do ambiente."; exit 1; }
+	@echo "Conta AWS: $(CONTA) · perfil: $${AWS_PROFILE:-credenciais do ambiente} · região: $(AWS_REGION)"
+
+infra-init: conta ## Inicializa o Terraform com o estado desta conta
+	terraform -chdir=infra init -backend-config="bucket=$(BUCKET)" -backend-config="region=$(AWS_REGION)"
+
+infra-up: conta ## Cria o ECR e o banco (a plataforma precisa estar no ar)
+	@test -f infra/.terraform/terraform.tfstate || $(MAKE) --no-print-directory infra-init
+	terraform -chdir=infra apply
+
+infra-down: conta ## Destrói o ECR e o banco
+	@test -f infra/.terraform/terraform.tfstate || $(MAKE) --no-print-directory infra-init
+	terraform -chdir=infra destroy
+
+infra-validate: ## Valida o Terraform, sem AWS
+	terraform -chdir=infra fmt -check
+	terraform -chdir=infra init -backend=false -input=false >/dev/null
+	terraform -chdir=infra validate

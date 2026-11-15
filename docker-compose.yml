@@ -2,7 +2,7 @@
 services:
   api:
     build: .
-    container_name: oficina-api
+    container_name: os-api
     ports:
       - "8000:8000"
     env_file: .env
