@@ -91,10 +91,10 @@ resource "aws_db_instance" "banco" {
   vpc_security_group_ids = [aws_security_group.banco.id]
   publicly_accessible    = false
 
-  # Ambiente efêmero: sem snapshot final, para destruir sem sobras; o backup automático fica no mínimo.
+  # Ambiente efêmero: sem snapshot final, para destruir sem sobras; backup automático de uma semana.
   skip_final_snapshot     = true
   deletion_protection     = false
-  backup_retention_period = 1
+  backup_retention_period = 7
   apply_immediately       = true
 
   monitoring_interval          = 0
