@@ -34,3 +34,4 @@ newrelic-agent.log
 
 # Logs
 *.log
+relatorio-bdd.json
