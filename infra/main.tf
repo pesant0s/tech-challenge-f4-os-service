@@ -81,6 +81,7 @@ resource "aws_db_instance" "banco" {
 
   allocated_storage = 20
   storage_type      = "gp2"
+  storage_encrypted = true
 
   db_name  = "os"
   username = "os"
@@ -90,10 +91,10 @@ resource "aws_db_instance" "banco" {
   vpc_security_group_ids = [aws_security_group.banco.id]
   publicly_accessible    = false
 
-  # Ambiente efêmero: nada de snapshot final nem backup, para destruir sem sobras.
+  # Ambiente efêmero: sem snapshot final, para destruir sem sobras; o backup automático fica no mínimo.
   skip_final_snapshot     = true
   deletion_protection     = false
-  backup_retention_period = 0
+  backup_retention_period = 1
   apply_immediately       = true
 
   monitoring_interval          = 0
