@@ -52,11 +52,16 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       # Abaixo de 80% de cobertura o pipeline falha.
-      - run: pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80 -q
+      - run: pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80 -q --cucumberjson=relatorio-bdd.json
       - uses: actions/upload-artifact@v4
         with:
           name: cobertura
           path: coverage.xml
+      # Evidência do fluxo completo da Saga em BDD (tests/bdd/saga_abertura_os.feature).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-bdd
+          path: relatorio-bdd.json
 
   qualidade:
     name: Qualidade (SonarQube Cloud)
