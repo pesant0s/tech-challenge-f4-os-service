@@ -1,14 +1,12 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: oficina-config
+  name: os-service
 data:
-  ALGORITHM: "HS256"
-  ACCESS_TOKEN_EXPIRE_MINUTES: "60"
-  ADMIN_USERNAME: "admin"
   ALLOWED_ORIGINS: '["*"]'
   LOG_FORMAT: "json"
   LOG_LEVEL: "INFO"
-  NEW_RELIC_APP_NAME: "tech-challenge-oficina"
+  UVICORN_WORKERS: "2"
+  NEW_RELIC_APP_NAME: "tech-challenge-f4-os-service"
   # O stdout já chega pelo nri-bundle; o encaminhamento do agente duplicaria cada linha.
   NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: "false"

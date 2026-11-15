@@ -1,10 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# O Secret oficina-secret é criado pelo pipeline a partir do Secrets Manager.
+# O Secret os-service-segredos é criado pelo pipeline a partir do SSM.
 resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
   - deployment.yaml
   - service.yaml
   - hpa.yaml
-  - configmap.yaml
   - pdb.yaml

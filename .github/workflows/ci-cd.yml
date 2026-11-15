@@ -1,7 +1,7 @@
 name: CI/CD
 
 # Testes, manifestos e boot da imagem sempre; publicação e deploy só com AMBIENTE_ATIVO=true
-# (ADR-013, no tech-challenge-infra-k8s). A main só recebe código por Pull Request.
+# (ADR-013, no tech-challenge-f4-plataforma). A main só recebe código por Pull Request.
 on:
   push:
     branches: [develop, main]
@@ -15,10 +15,7 @@ concurrency:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: oficina-api
-  EKS_CLUSTER: tech-challenge-eks
-  NAMESPACE: oficina
-  DEPLOYMENT: oficina-api
+  SERVICO: os-service
 
 permissions:
   contents: read
@@ -94,13 +91,6 @@ jobs:
     name: Build e prova da imagem
     needs: [testes, manifestos]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      PUBLICAR: ${{ github.ref_name == 'main' && github.event_name != 'pull_request' && vars.AMBIENTE_ATIVO == 'true' }}
-    outputs:
-      imagem: ${{ steps.publicar.outputs.imagem }}
     services:
       postgres:
         image: postgres:16-alpine
@@ -131,7 +121,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: docker build -t oficina-api:ci .
+      - run: docker build -t os-service:ci .
 
       # Mesmo caminho de um deploy novo: o entrypoint migra um banco vazio e sobe o servidor.
       - name: Provar que a imagem sobe contra PostgreSQL e RabbitMQ
@@ -141,7 +131,7 @@ jobs:
             -e SECRET_KEY=chave-de-ci-com-mais-de-32-caracteres-para-teste \
             -e RABBITMQ_URL=amqp://oficina:oficina@localhost:5672/%2F \
             -e LOG_FORMAT=json \
-            oficina-api:ci
+            os-service:ci
           for _ in $(seq 1 60); do
             if curl -fsS http://localhost:8000/health/ready && docker logs api 2>&1 | grep -q mensageria_conectada; then
               exit 0
@@ -151,39 +141,6 @@ jobs:
           done
           docker logs api
           exit 1
-
-      - name: Autenticar na AWS via OIDC
-        id: aws
-        if: env.PUBLICAR == 'true'
-        continue-on-error: true
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Explicar falha de autenticação
-        if: env.PUBLICAR == 'true' && steps.aws.outcome == 'failure'
-        run: |
-          echo "::error::AMBIENTE_ATIVO=true, mas a role não pôde ser assumida: o ambiente foi destruído sem 'make down' ou falta o secret AWS_ROLE_ARN."
-          exit 1
-
-      - name: Login no ECR
-        id: ecr
-        if: env.PUBLICAR == 'true'
-        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
-
-      - name: Publicar no ECR
-        id: publicar
-        if: env.PUBLICAR == 'true'
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-        run: |
-          IMAGEM="$REGISTRY/$ECR_REPOSITORY"
-          docker tag oficina-api:ci "$IMAGEM:${GITHUB_SHA::7}"
-          docker tag oficina-api:ci "$IMAGEM:latest"
-          docker push "$IMAGEM:${GITHUB_SHA::7}"
-          docker push "$IMAGEM:latest"
-          echo "imagem=$IMAGEM:${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
   ambiente-desligado:
     name: Publicação e deploy não executados
@@ -195,60 +152,119 @@ jobs:
 
   deploy:
     name: Deploy no EKS
-    needs: imagem
-    if: github.ref_name == 'main' && github.event_name != 'pull_request' && vars.AMBIENTE_ATIVO == 'true'
+    needs: [testes, qualidade, manifestos, imagem]
+    if: github.ref_name == 'main' && github.event_name == 'push' && vars.AMBIENTE_ATIVO == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+    env:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
     steps:
       - uses: actions/checkout@v4
 
+      # Conta comum: OIDC. Laboratório (AWS Academy): credenciais da sessão.
       - name: Autenticar na AWS via OIDC
-        id: aws
-        continue-on-error: true
+        if: env.AWS_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Explicar falha de autenticação
-        if: steps.aws.outcome == 'failure'
+      - name: Autenticar na AWS com as credenciais da sessão
+        if: env.AWS_ROLE_ARN == ''
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: conta
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+
+      # ECR e banco são idempotentes: sem mudança, o apply não altera nada.
+      - name: Aplicar a infraestrutura do serviço
         run: |
-          echo "::error::AMBIENTE_ATIVO=true, mas a role não pôde ser assumida: o ambiente foi destruído sem 'make down' ou falta o secret AWS_ROLE_ARN."
-          exit 1
+          terraform -chdir=infra init -input=false \
+            -backend-config="bucket=tech-challenge-f4-tfstate-${{ steps.conta.outputs.id }}" \
+            -backend-config="region=$AWS_REGION"
+          terraform -chdir=infra apply -auto-approve -input=false
 
-      - run: aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      - run: kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+      - name: Build e push da imagem
+        id: imagem
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGEM="$REGISTRY/tech-challenge-f4-$SERVICO:${GITHUB_SHA::7}"
+          docker build -t "$IMAGEM" .
+          docker push "$IMAGEM"
+          echo "imagem=$IMAGEM" >> "$GITHUB_OUTPUT"
 
-      # O Secret nunca é versionado: é montado a cada deploy a partir do Secrets Manager.
+      - name: Apontar o kubectl para o cluster
+        run: aws eks update-kubeconfig --name "$(aws ssm get-parameter --name /tech-challenge-f4/cluster/nome --query Parameter.Value --output text)" --region "$AWS_REGION"
+
+      - name: Criar namespace
+        run: kubectl create namespace "$SERVICO" --dry-run=client -o yaml | kubectl apply -f -
+
+      # O Secret nunca é versionado: é montado a cada deploy a partir do SSM.
       - name: Sincronizar Secret
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
         run: |
-          SEGREDO=$(aws secretsmanager get-secret-value --secret-id tech-challenge/app --query SecretString --output text)
-          campo() { echo "$SEGREDO" | python3 -c "import json,sys;print(json.load(sys.stdin)['$1'])"; }
-          kubectl create secret generic oficina-secret --namespace "$NAMESPACE" \
-            --from-literal=DATABASE_URL="$(campo DATABASE_URL)" \
-            --from-literal=SECRET_KEY="$(campo SECRET_KEY)" \
-            --from-literal=ADMIN_PASSWORD="$(campo ADMIN_PASSWORD)" \
-            --from-literal=NEW_RELIC_LICENSE_KEY="${{ secrets.NEW_RELIC_LICENSE_KEY }}" \
+          ssm() { aws ssm get-parameter --name "/tech-challenge-f4/$1" --with-decryption --query Parameter.Value --output text; }
+
+          # O admin é semeado só na primeira subida, então a senha precisa sobreviver aos deploys:
+          # vale o secret do GitHub; sem ele, a que já está no cluster; sem nenhuma, uma nova.
+          if [ -z "$ADMIN_PASSWORD" ]; then
+            ADMIN_PASSWORD=$(kubectl get secret "$SERVICO-segredos" -n "$SERVICO" -o jsonpath='{.data.ADMIN_PASSWORD}' 2>/dev/null | base64 -d || true)
+          fi
+          if [ -z "$ADMIN_PASSWORD" ]; then
+            ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)
+          fi
+          echo "::add-mask::$ADMIN_PASSWORD"
+
+          NR=$(ssm newrelic/license_key)
+          # Vazio ou "desligado": o agente não sobe, e a chave não entra no Secret.
+          NR_ARG=()
+          if [ -n "$NR" ] && [ "$NR" != "None" ] && [ "$NR" != "desligado" ]; then
+            echo "::add-mask::$NR"
+            NR_ARG=(--from-literal=NEW_RELIC_LICENSE_KEY="$NR")
+          fi
+          kubectl create secret generic "$SERVICO-segredos" --namespace "$SERVICO" \
+            --from-literal=DATABASE_URL="$(ssm os-service/database_url)" \
+            --from-literal=SECRET_KEY="$(ssm segredos/jwt_secret_key)" \
+            --from-literal=RABBITMQ_URL="$(ssm rabbitmq/url)" \
+            --from-literal=TOKEN_INTERNO="$(ssm segredos/token_interno)" \
+            --from-literal=ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+            "${NR_ARG[@]}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Aplicar manifestos
         env:
-          IMAGEM: ${{ needs.imagem.outputs.imagem }}
+          IMAGEM: ${{ steps.imagem.outputs.imagem }}
         run: |
-          (cd k8s/overlays/producao && kustomize edit set image "oficina-api=$IMAGEM")
+          (cd k8s/overlays/producao && kustomize edit set image "IMAGEM_PLACEHOLDER=$IMAGEM")
           kubectl apply -k k8s/overlays/producao
-          kubectl rollout status "deployment/$DEPLOYMENT" -n "$NAMESPACE" --timeout=300s
+          kubectl rollout status "deployment/$SERVICO" -n "$SERVICO" --timeout=300s
 
-      - name: Smoke test
+      - name: Teste de fumaça pelo API Gateway
         run: |
-          kubectl run "smoke-test-${GITHUB_RUN_ID}" --namespace "$NAMESPACE" --rm -i --restart=Never \
-            --image=curlimages/curl:8.10.1 -- curl -fsS "http://${DEPLOYMENT}/health"
+          ENDPOINT=$(aws ssm get-parameter --name /tech-challenge-f4/apigateway/endpoint --query Parameter.Value --output text)
+          for _ in $(seq 1 30); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' "$ENDPOINT/health")" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::GET $ENDPOINT/health não respondeu 200."
+          exit 1
 
       - name: Diagnóstico em caso de falha
         if: failure()
         run: |
-          kubectl get all -n "$NAMESPACE"
-          kubectl logs -n "$NAMESPACE" -l app.kubernetes.io/name=oficina-api --tail=100 || true
+          kubectl get all -n "$SERVICO" || true
+          kubectl logs -n "$SERVICO" -l app.kubernetes.io/name="$SERVICO" --tail=100 || true

@@ -35,3 +35,9 @@ newrelic-agent.log
 # Logs
 *.log
 relatorio-bdd.json
+
+# Terraform
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars

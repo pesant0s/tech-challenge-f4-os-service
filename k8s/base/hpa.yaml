@@ -1,14 +1,14 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: oficina-api
+  name: os-service
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: oficina-api
+    name: os-service
   minReplicas: 2
-  maxReplicas: 6
+  maxReplicas: 4
   # Só CPU: a memória de um processo Python é quase fixa e prenderia o HPA no máximo.
   metrics:
     - type: Resource
