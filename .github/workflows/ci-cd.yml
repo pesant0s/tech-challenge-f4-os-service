@@ -153,7 +153,7 @@ jobs:
   deploy:
     name: Deploy no EKS
     needs: [testes, qualidade, manifestos, imagem]
-    if: github.ref_name == 'main' && github.event_name == 'push' && vars.AMBIENTE_ATIVO == 'true'
+    if: github.ref_name == 'main' && github.event_name != 'pull_request' && vars.AMBIENTE_ATIVO == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -53,7 +53,7 @@ resource "aws_db_subnet_group" "banco" {
 
 resource "aws_security_group" "banco" {
   name        = "${local.nome}-db"
-  description = "PostgreSQL do os-service, acessível só pelo cluster"
+  description = "PostgreSQL do os-service, aberto apenas para o cluster"
   vpc_id      = data.aws_ssm_parameter.vpc_id.value
 }
 
